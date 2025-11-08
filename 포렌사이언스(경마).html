@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>포렌사이언스(경마)</title>
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#0b1020">
+  <style>
+    :root{--bg:#0b1020;--track:#0e1736;--rail:#2f3e7a;--acc:#90f5ff;--txt:#e8f5ff;}
+    *{box-sizing:border-box}
+    body{margin:0;background:radial-gradient(1200px 600px at 50% -10%,#202a5a,#0b1020);color:var(--txt);font-family:ui-rounded,system-ui,-apple-system,"Segoe UI",Roboto,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center}
+    .wrap{width:min(1100px,96vw);display:grid;gap:14px;grid-template-columns:1.25fr 1fr;padding:14px}
+    .card{background:linear-gradient(180deg,#141a3a,#0d1430);border:1px solid #334082;border-radius:16px;padding:14px;box-shadow:0 10px 30px rgba(0,0,0,.35),inset 0 0 40px rgba(144,245,255,.06)}
+    h1{margin:0 0 10px;font-size:20px}
+    .track{background:var(--track);border:2px solid var(--rail);border-radius:14px;padding:10px}
+    .lane{position:relative;height:68px;border-bottom:1px dashed #2a366e;display:flex;align-items:center;padding-left:8px}
+    .lane:last-child{border-bottom:none}
+    .horse{position:absolute;left:0;top:50%;transform:translateY(-50%);display:flex;align-items:center;gap:8px;font-size:30px;transition:transform .1s}
+    .horse .name{font-size:14px;background:#101842;border:1px solid #2b3a7e;padding:2px 6px;border-radius:10px}
+    .flag{position:absolute;right:0;top:0;bottom:0;width:6px;background:linear-gradient(180deg,#8ef,#69f)}
+    .controls{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px;align-items:center}
+    button{background:linear-gradient(180deg,#22b6ff,#1681ff);color:#021226;border:none;padding:10px 14px;border-radius:12px;font-weight:800;cursor:pointer;box-shadow:0 8px 14px rgba(22,129,255,.28)}
+    button:disabled{opacity:.6;cursor:not-allowed}
+    select,input[type=number]{background:#0b1330;border:1px solid #2b3a7e;color:var(--txt);border-radius:10px;padding:8px}
+    .grid{display:grid;gap:10px}
+    .stats{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
+    .stat{background:#0c1330;border:1px solid #28346a;padding:10px;border-radius:12px;font-size:14px}
+    .panel h2{margin:0 0 10px;font-size:18px}
+    table{width:100%;border-collapse:collapse;font-size:14px}
+    th,td{border-bottom:1px solid #243064;padding:8px;text-align:center}
+    .row{display:grid;grid-template-columns:34px 1fr 70px 84px;align-items:center;gap:8px}
+    input[type=range]{width:100%}
+    .msg{min-height:24px}
+    .ok{color:#86ff9b}.warn{color:#ffd76e}
+    /* 관리자 패널 숨김 토글용 */
+    .admin-hidden{display:none !important;}
+    .toast{position:fixed;left:50%;top:16px;transform:translateX(-50%);background:#0c1330;border:1px solid #2b3a7e;color:#e8f5ff;padding:8px 12px;border-radius:10px;font-size:13px;opacity:0;transition:opacity .3s;z-index:9999}
+    .toast.show{opacity:1}
+  </style>
+</head>
+<body>
+  <div class=\"wrap\">
+    <div id=\"toast\" class=\"toast\"></div>
+    <section class="card">
+      <h1>🏇 포렌사이언스(경마)</h1>
+      <div class="track" id="track"></div>
+      <div class="controls">
+        <label>선택 말
+          <select id="horseSelect"></select>
+        </label>
+        <label>베팅(포인트)
+          <input type="number" id="bet" value="5" min="1" step="1" />
+        </label>
+        <button id="raceBtn">RACE!</button>
+        <button id="resetBtn">리셋</button>
+        <div class="msg" id="msg"></div>
+      </div>
+      <div class="stats">
+        <div class="stat">현재 잔액(연습용): <b id="balance">100</b></div>
+        <div class="stat">예상 RTP: <b id="rtp">–</b></div>
+        <div class="stat">내기 마진(하우스 에지): <b id="margin">–</b></div>
+        <div class="stat">선택 말 승률(모형): <b id="pickProb">–</b></div>
+      </div>
+    </section>
+
+    <section class=\"card panel admin-target\">
+      <h2>말 능력치(가중치) & 배당 설정</h2>
+      <div id="weights"></div>
+      <div class="stat" style="margin-top:10px">안내: 가중치가 높을수록 그 말이 <b>강함</b> → 승률↑. 배당은 자동 계산(1/승률 기반)되며, <b>마진</b>을 조절해 운영 비용을 관리하세요.</div>
+      <div style="margin-top:10px" class="grid">
+        <label>하우스 마진(%) <input type="number" id="marginInput" value="15" min="0" max="90" step="1"></label>
+      </div>
+      <h2 style="margin-top:12px">현재 배당표</h2>
+      <table>
+        <thead><tr><th>#</th><th>말 이름</th><th>가중치</th><th>모형 승률</th><th>배당(×)</th></tr></thead>
+        <tbody id="oddsTable"></tbody>
+      </table>
+    </section>
+  </div>
+
+<script>
+// ================== 설정 ==================
+const HORSES = [
+  {emoji:'🐴', name:'1번 포니', weight: 6},
+  {emoji:'🦄', name:'2번 유니콘', weight: 5},
+  {emoji:'🐎', name:'3번 썬더', weight: 4},
+  {emoji:'🫏', name:'4번 당나귀', weight: 3},
+  {emoji:'🦓', name:'5번 지브라', weight: 2},
+];
+let marginPct = 15; // 하우스 마진(%) 기본값
+let balance = 100; // 연습용 잔액 UI
+const L = HORSES.length;
+
+// ================== 승률/배당 모델 ==================
+function probsFromWeights(){
+  const sum = HORSES.reduce((a,h)=>a+h.weight,0);
+  return HORSES.map(h=>h.weight/sum);
+}
+// 공정 배당 = 1/p, 실제 배당 = 공정배당*(1 - margin)
+function payoutsFromProbs(ps){
+  const m = Math.max(0, Math.min(0.9, marginPct/100));
+  return ps.map(p=> (1/p) * (1-m));
+}
+function rtpFrom(ps, pays){
+  // 참가자가 임의로 한 마리를 골라 베팅한다고 가정한 평균 RTP
+  // = mean_i [ p_i * payout_i ]
+  let s = 0; for(let i=0;i<ps.length;i++) s += ps[i]*pays[i];
+  return s / ps.length; // 고르게 고른다고 가정 (부스용 단순화)
+}
+
+// ================== 레이스 물리 ==================
+// 각 말의 기본속도는 승률에 비례. 프레임마다 난수 가속을 얹어 역전 드라마 유지.
+function simulateStep(state, dt){
+  // dt: 초. 진행도는 0~1
+  const ps = probsFromWeights();
+  for(let i=0;i<L;i++){
+    const base = 0.35 + ps[i]*0.9; // 강할수록 평균속도↑
+    const noise = (Math.random()-0.5)*0.25; // 흔들림
+    const boostChance = Math.random()<ps[i]*0.15 ? 0.12 : 0; // 강한 말에게 가끔 부스트
+    state.pos[i] += Math.max(0.001, (base + noise + boostChance)) * dt * 0.24; // 스케일링
+    if(state.pos[i] > 1) state.pos[i] = 1;
+  }
+  return state;
+}
+
+// ================== UI 요소 ==================
+const trackEl = document.getElementById('track');
+const weightsEl = document.getElementById('weights');
+const oddsTableEl = document.getElementById('oddsTable');
+const horseSelect = document.getElementById('horseSelect');
+const betInput = document.getElementById('bet');
+const raceBtn = document.getElementById('raceBtn');
+const resetBtn = document.getElementById('resetBtn');
+const msgEl = document.getElementById('msg');
+const balanceEl = document.getElementById('balance');
+const rtpEl = document.getElementById('rtp');
+const marginEl = document.getElementById('margin');
+const marginInput = document.getElementById('marginInput');
+const pickProbEl = document.getElementById('pickProb');
+
+// 말 DOM 렌더
+const lanes = [];
+function renderTrack(){
+  trackEl.innerHTML = '';
+  HORSES.forEach((h,i)=>{
+    const lane = document.createElement('div'); lane.className='lane';
+    const horse = document.createElement('div'); horse.className='horse'; horse.id='horse'+i;
+    horse.innerHTML = `<span class="icon">${h.emoji}</span><span class="name">${h.name}</span>`;
+    lane.appendChild(horse);
+    const flag = document.createElement('div'); flag.className='flag'; lane.appendChild(flag);
+    trackEl.appendChild(lane);
+    lanes[i] = {lane, horse};
+  });
+}
+
+// 가중치 슬라이더
+function renderWeights(){
+  weightsEl.innerHTML='';
+  HORSES.forEach((h,i)=>{
+    const row = document.createElement('div'); row.className='row';
+    row.innerHTML = `
+      <div>${i+1}</div>
+      <input type="range" min="1" max="20" value="${h.weight}" data-i="${i}" />
+      <input type="number" min="1" max="99" value="${h.weight}" data-i="${i}" class="wNum" />
+      <input type="text" value="${h.name}" data-i="${i}" class="nameInp" />
+    `;
+    weightsEl.appendChild(row);
+  });
+  // 이벤트
+  weightsEl.querySelectorAll('input[type=range]').forEach(r=>{
+    r.addEventListener('input', e=>{ const i=+e.target.dataset.i; HORSES[i].weight=+e.target.value; syncWeightInputs(i); updateOdds(); });
+  });
+  weightsEl.querySelectorAll('.wNum').forEach((n,i)=>{
+    n.addEventListener('input', e=>{ HORSES[i].weight=Math.max(1,Math.min(99,+e.target.value||1)); syncWeightSliders(i); updateOdds(); });
+  });
+  weightsEl.querySelectorAll('.nameInp').forEach((n,i)=>{
+    n.addEventListener('input', e=>{ HORSES[i].name=e.target.value||(`말 ${i+1}`); lanes[i].horse.querySelector('.name').textContent = HORSES[i].name; renderOddsTable(); fillHorseSelect(); });
+  });
+}
+function syncWeightInputs(i){ weightsEl.querySelectorAll('.wNum')[i].value = HORSES[i].weight; }
+function syncWeightSliders(i){ weightsEl.querySelectorAll('input[type=range]')[i].value = HORSES[i].weight; }
+
+// 배당표
+function renderOddsTable(){
+  const ps = probsFromWeights();
+  const pays = payoutsFromProbs(ps);
+  oddsTableEl.innerHTML = HORSES.map((h,i)=>{
+    return `<tr><td>${i+1}</td><td>${h.name}</td><td>${h.weight}</td><td>${(ps[i]*100).toFixed(1)}%</td><td>×${pays[i].toFixed(2)}</td></tr>`;
+  }).join('');
+}
+
+function fillHorseSelect(){
+  horseSelect.innerHTML = HORSES.map((h,i)=>`<option value="${i}">${i+1}번 — ${h.name}</option>`).join('');
+}
+
+function updateRTP(){
+  const ps = probsFromWeights();
+  const pays = payoutsFromProbs(ps);
+  const rtp = rtpFrom(ps, pays);
+  rtpEl.textContent = `${(rtp*100).toFixed(1)}%`;
+  marginEl.textContent = `${marginPct}%`;
+  const pick = +horseSelect.value || 0; pickProbEl.textContent = `${(ps[pick]*100).toFixed(1)}%`;
+}
+
+function updateOdds(){ renderOddsTable(); updateRTP(); }
+
+// 레이스 엔진
+let racing = false; let state = null; let raf = null; let startTs = 0;
+function resetRace(){
+  state = { pos: Array.from({length:L},()=>0) };
+  HORSES.forEach((_,i)=>{ moveHorse(i,0); });
+}
+function moveHorse(i, progress){
+  // progress: 0~1 → 픽셀로 변환
+  const laneWidth = lanes[i].lane.clientWidth - 20; // 여유
+  const x = Math.max(0, (laneWidth - 30) * progress);
+  lanes[i].horse.style.transform = `translate( ${x}px, -50% )`;
+}
+function tick(ts){
+  if(!startTs) startTs = ts; const dt = (ts - startTs)/1000; startTs = ts;
+  simulateStep(state, dt);
+  let winner = -1; for(let i=0;i<L;i++){ moveHorse(i, state.pos[i]); if(state.pos[i] >= 1 && winner===-1) winner = i; }
+  if(winner>=0){ finishRace(winner); return; }
+  raf = requestAnimationFrame(tick);
+}
+function startRace(){
+  if(racing) return; racing = true; msgEl.textContent = '🏁 출발!'; raceBtn.disabled=true; resetBtn.disabled=true;
+  startTs = 0; raf = requestAnimationFrame(tick);
+}
+function finishRace(winner){
+  cancelAnimationFrame(raf); racing=false; raceBtn.disabled=false; resetBtn.disabled=false;
+  const bet = Math.max(1, Math.floor(+betInput.value||1));
+  const pick = +horseSelect.value || 0; const ps = probsFromWeights(); const pays = payoutsFromProbs(ps);
+  if(balance < bet){ msgEl.textContent = '잔액 부족! (연습용)'; return; }
+  balance -= bet;
+  let winAmt = 0;
+  if(pick === winner){ winAmt = Math.round(bet * pays[winner]); balance += winAmt; msgEl.textContent = `🎉 우승: ${winner+1}번 ${HORSES[winner].name}! 배당 ×${pays[winner].toFixed(2)} → +${winAmt}`; }
+  else { msgEl.textContent = `🫠 우승: ${winner+1}번 ${HORSES[winner].name}. 꽝!`; }
+  balanceEl.textContent = balance;
+}
+
+// 이벤트 바인딩
+raceBtn.addEventListener('click', ()=>{ startRace(); });
+resetBtn.addEventListener('click', ()=>{ resetRace(); msgEl.textContent='대기 중…'; });
+marginInput.addEventListener('input', e=>{ marginPct = Math.max(0, Math.min(90, +e.target.value||0)); updateOdds(); });
+horseSelect.addEventListener('change', updateRTP);
+
+// 초기화
+renderTrack(); renderWeights(); fillHorseSelect(); resetRace(); updateOdds(); balanceEl.textContent = balance; msgEl.textContent='대기 중…';
+
+// 반응형 리사이즈 시 위치 보정
+window.addEventListener('resize', ()=>{ if(!state) return; HORSES.forEach((_,i)=> moveHorse(i, state.pos[i])); });
+</script>
+<script>
+// ==== 관리자 모드 토글 ====
+(function(){
+  const adminTargets = document.querySelectorAll('.admin-target');
+  const toast = document.getElementById('toast');
+  function showToast(msg){ if(!toast) return; toast.textContent = msg; toast.classList.add('show'); setTimeout(()=>toast.classList.remove('show'), 1200);}
+  function setAdmin(v){ adminTargets.forEach(el=> el.classList.toggle('admin-hidden', !v)); localStorage.setItem('horse_admin', v?'1':'0'); showToast(v?'관리자 모드 ON':'관리자 모드 OFF'); }
+  // 초기 상태: URL에 #admin 있으면 ON, 아니면 저장값 사용, 기본 OFF
+  let init = (location.hash.includes('admin') || localStorage.getItem('horse_admin')==='1');
+  setAdmin(init);
+  // 단축키: Ctrl+Shift+A 로 토글
+  window.addEventListener('keydown', (e)=>{ if(e.ctrlKey && e.shiftKey && (e.key==='A' || e.key==='a')){ e.preventDefault(); setAdmin(!document.querySelector('.admin-target')||document.querySelector('.admin-target').classList.contains('admin-hidden')); }});
+})();
+</script>
+<script>
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("./sw.js");
+  });
+}
+</script>
+</body>
+</html>
